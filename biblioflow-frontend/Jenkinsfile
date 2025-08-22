@@ -3,7 +3,7 @@ pipeline {
   options { timestamps() }
 
   environment {
-    IMAGE_UI = 'biblioflow-ui:prod'
+    IMAGE_UI  = 'biblioflow-ui:prod'
     TEST_PORT = '8084'   // change if busy
   }
 
@@ -14,7 +14,11 @@ pipeline {
 
     stage('Build UI image') {
       steps {
-        sh 'docker build -t ${IMAGE_UI} .'
+        dir('biblioflow-frontend') {
+          sh 'docker build -t ${IMAGE_UI} .'
+        }
+        // Alternatively (no dir):
+        // sh 'docker build -t ${IMAGE_UI} -f biblioflow-frontend/Dockerfile biblioflow-frontend'
       }
     }
 
@@ -31,8 +35,6 @@ pipeline {
   }
 
   post {
-    always {
-      sh 'docker rm -f ui_test || true'
-    }
+    always { sh 'docker rm -f ui_test || true' }
   }
 }
