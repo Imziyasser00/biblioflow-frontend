@@ -4,7 +4,11 @@ pipeline {
 
   environment {
     IMAGE_UI  = 'biblioflow-ui:prod'
-    TEST_PORT = '8084'   // change if busy
+    TEST_PORT = '8084'          // change if busy
+
+    // Sonar config (names must match your Jenkins config)
+    SONAR_SERVER_NAME = 'SonarQube'   // Manage Jenkins > System > SonarQube servers
+    SONAR_SCANNER     = 'SonarScanner'// Global Tool Configuration > SonarQube Scanner
   }
 
   stages {
@@ -12,32 +16,76 @@ pipeline {
       steps { checkout scm }
     }
 
+    /* ---------- Unit tests + coverage (for Sonar) ---------- */
+    stage('Unit Tests (coverage)') {
+      steps {
+        dir('biblioflow-frontend') {
+          // Use Node already installed on agent (or install a Node tool if you configured one)
+          sh '''
+            set -e
+            npm ci
+            npx ng test --watch=false --browsers=ChromeHeadless --code-coverage
+          '''
+        }
+      }
+    }
+
+    /* ---------- SonarQube Analysis ---------- */
+    stage('SonarQube Analysis') {
+      steps {
+        dir('biblioflow-frontend') {
+          withSonarQubeEnv("${SONAR_SERVER_NAME}") {
+            script {
+              def scannerHome = tool "${SONAR_SCANNER}"
+              sh """
+                "${scannerHome}/bin/sonar-scanner" \
+                  -Dsonar.projectBaseDir=.
+              """
+            }
+          }
+        }
+      }
+    }
+
+    /* ---------- Quality Gate (fail fast if red) ---------- */
+    stage('Quality Gate') {
+      steps {
+        timeout(time: 10, unit: 'MINUTES') {
+          // aborts pipeline if QG fails
+          waitForQualityGate abortPipeline: true
+        }
+      }
+    }
+
+    /* ---------- Build UI Docker image ---------- */
     stage('Build UI image') {
       steps {
         dir('biblioflow-frontend') {
           sh 'docker build -t ${IMAGE_UI} .'
         }
-        // Alternatively (no dir):
+        // Alternatively:
         // sh 'docker build -t ${IMAGE_UI} -f biblioflow-frontend/Dockerfile biblioflow-frontend'
       }
     }
 
-  stage('Smoke Test UI') {
-    steps {
-      sh '''
-        docker rm -f ui_test || true
-        docker run -d --name ui_test -p ${TEST_PORT}:80 ${IMAGE_UI}
+    /* ---------- Smoke test the container ---------- */
+    stage('Smoke Test UI') {
+      steps {
+        sh '''
+          docker rm -f ui_test || true
+          docker run -d --name ui_test -p ${TEST_PORT}:80 ${IMAGE_UI}
 
-        # wait a bit, then hit host-mapped port
-        sleep 4
-        curl -sSf http://host.docker.internal:${TEST_PORT}/ > /dev/null
-      '''
+          # wait a bit, then hit host-mapped port
+          sleep 4
+          curl -sSf http://host.docker.internal:${TEST_PORT}/ > /dev/null
+        '''
+      }
     }
   }
 
-  }
-
   post {
-    always { sh 'docker rm -f ui_test || true' }
+    always {
+      sh 'docker rm -f ui_test || true'
+    }
   }
 }
